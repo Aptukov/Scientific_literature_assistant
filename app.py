@@ -1,6 +1,3 @@
-# pip install streamlit gigachain-community PyMuPDF
-# streamlit run app.py
-
 # Импортирование необходимых библиотек
 import streamlit as st
 import fitz  # PyMuPDF
