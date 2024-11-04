@@ -5,6 +5,16 @@ import tempfile
 from langchain.schema import HumanMessage, SystemMessage
 from langchain_community.chat_models.gigachat import GigaChat
 
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain.text_splitter import SentenceTransformersTokenTextSplitter
+from langchain.vectorstores.faiss import FAISS
+from langchain.schema import Document
+from langchain.schema import AIMessage, HumanMessage
+
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain.chains import create_history_aware_retriever, create_retrieval_chain
+from langchain.chains.combine_documents import create_stuff_documents_chain
+
 # Заголовок приложения
 st.title("Ваш персональный ассистент для работы с научной литературой")
 
@@ -31,18 +41,7 @@ def call_gigachat_api(prompt, text_content):
     res = chat(messages)
     return res.content
 
-
-
-
-
-from langchain.embeddings import HuggingFaceEmbeddings
-from langchain.retrievers import EnsembleRetriever
-from langchain.vectorstores.faiss import FAISS
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-
-
-
-
+embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-multilingual-mpnet-base-v2")
 
 # Работа самого приложения
 if uploaded_file is not None:
@@ -54,6 +53,89 @@ if uploaded_file is not None:
         text_content = extract_text(uploaded_file, file_extension)
     except Exception as e:
         st.write('Похоже, произошла какая-то ошибка, попробуйте загрузить файл ещё раз')
+
+    # RAG
+    # Разделение текста на части
+    class CustomTextSplitter(SentenceTransformersTokenTextSplitter):
+
+        def split_text(self, text: str) -> list:
+            chunks = super().split_text(text)
+            chunks_with_prefix = ['search_document: ' + chunk for chunk in chunks]
+            return chunks_with_prefix
+
+    docs = [Document(page_content=text_content)]
+
+    text_splitter = CustomTextSplitter(chunk_size=506, chunk_overlap=50, model_name="ai-forever/ru-en-RoSBERTa")
+    split_docs = text_splitter.split_documents(docs)
+
+    vector_store = FAISS.from_documents(split_docs, embedding=embeddings)
+
+    retriever = vector_store.as_retriever(
+        search_type="similarity",
+        search_kwargs={"k": 3},
+    )
+    contextualize_q_system_prompt = (
+        "Учитывай историю чата и последний вопрос пользователя, "
+        "который может ссылаться на контекст в истории чата, "
+        "сформулируй отдельный вопрос, который может быть понят без истории чата."
+        "НЕ отвечай на вопрос, просто переформулируй его при необходимости, "
+        "в ином случае верни его как есть."
+    )
+
+    contextualize_q_prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", contextualize_q_system_prompt),
+            MessagesPlaceholder("chat_history"),
+            ("human", "{input}"),
+        ]
+    )
+
+    history_aware_retriever = create_history_aware_retriever(
+        chat, retriever, contextualize_q_prompt
+    )
+
+    qa_system_prompt = (
+        "Вы являетесь помощником при выполнении заданий, связанных с ответами на вопросы."
+        "Используйте следующие фрагменты найденного контекста, чтобы ответить на вопрос."
+        "Если вы не знаете ответа, просто скажите, что не знаете."
+        "Используйте не более трех предложений и будьте лаконичны в ответе."
+        "\n\n"
+        "{context}"
+    )
+
+    qa_prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", qa_system_prompt),
+            MessagesPlaceholder("chat_history"),
+            ("human", "{input}"),
+        ]
+    )
+
+    question_answer_chain = create_stuff_documents_chain(chat, qa_prompt)
+
+    rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chain)
+
+    termins_system_prompt = (
+        "Вы являетесь помощником при выполнении заданий, связанных с выдачей определений терминов."
+        "Используйте следующие фрагменты найденного контекста, чтобы ответить на вопрос."
+        "Если вы не знаете ответа, просто скажите, что не знаете."
+        "Используйте не более трех предложений и будьте лаконичны в ответе."
+        "\n\n"
+        "{context}"
+    )
+
+    termins_prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", termins_system_prompt),
+            MessagesPlaceholder("chat_history"),
+            ("human", "{input}"),
+        ]
+    )
+
+    termins_answer_chain = create_stuff_documents_chain(chat, termins_prompt)
+
+    rag_chain_termins = create_retrieval_chain(history_aware_retriever, termins_answer_chain)
+
 
     if text_content:
         # Кнопки функционала
@@ -67,7 +149,7 @@ if uploaded_file is not None:
 
         if selected_function == functions[0]:  # Литературный обзор
             if st.button("Сформировать литературный обзор", key="review_button"):
-                prompt = "Сформируйте литературный обзор на основе следующего текста. Используйте не более 200 слов."
+                prompt = "Вы являетесь помощником для резюмирования текста. Выдавайте ответы всегда на русском, независимо от языка самой статьи. Используйте не более 200 слов и будьте лаконичны в ответе."
                 review = call_gigachat_api(prompt, text_content)
                 st.write(review)
 
@@ -75,26 +157,16 @@ if uploaded_file is not None:
             if 'question_history' not in st.session_state:
                 st.session_state.question_history = []
 
+            chat_history = []
             question = st.text_input("Введите ваш вопрос:", key="question_input")
+
             if st.button("Задать вопрос", key="ask_question_button"):
-                text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=100)
-                split_docs = text_splitter.split_documents(text_content)
-                model_name = "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
-                encode_kwargs = {'normalize_embeddings': False}
-                embedding = HuggingFaceEmbeddings(model_name=model_name, encode_kwargs=encode_kwargs)
-                vector_store = FAISS.from_documents(split_docs, embedding=embedding)
-                embedding_retriever = vector_store.as_retriever(search_kwargs={"k": 3})
-                prompt = ChatPromptTemplate.from_template(('''Ответь на вопрос пользователя. \
-                Используй при этом только информацию из контекста. Если в контексте нет \
-                информации для ответа, сообщи об этом пользователю.
-                Контекст: {context}
-                Вопрос: {input}
-                Ответ:''')
-                document_chain = create_stuff_documents_chain(llm=chat, prompt=prompt)
-                retrieval_chain = create_retrieval_chain(embedding_retriever, document_chain)
-                retrieval_chain.invoke(
-                    {'input': q1}
-                )
+                result = rag_chain.invoke({"input": question, "chat_history": chat_history})
+                answer = result['answer']
+
+                chat_history.append(HumanMessage(content=question))
+                chat_history.append(AIMessage(content=answer))
+
                 st.session_state.question_history.append((question, answer))
 
             for q, a in st.session_state.question_history:
@@ -105,9 +177,15 @@ if uploaded_file is not None:
             if 'term_history' not in st.session_state:
                 st.session_state.term_history = []
 
+            chat_history_termins = []
             term = st.text_input("Введите термин:", key="term_input")
             if st.button("Объяснить термин", key="explain_term_button"):
-                definition = call_gigachat_api(f"Дай подробное определение термину: {term}", text_content)
+                res = rag_chain_termins.invoke({"input": term, "chat_history": chat_history_termins})
+                definition = res['answer']
+
+                chat_history_termins.append(HumanMessage(content=term))
+                chat_history_termins.append(AIMessage(content=definition))
+
                 st.session_state.term_history.append((term, definition))
 
             for t, d in st.session_state.term_history:
@@ -120,7 +198,7 @@ if uploaded_file is not None:
 
             summary_percentage = st.slider("Выберите процент суммирования:", 10, 90, 50, key="summary_slider")
             if st.button("Суммировать", key="summarize_button"):
-                summary_prompt = f"Суммируй текст на {summary_percentage}%. 90% - суммируй до пары предложений, 10% - суммируй до пары абзацев."
+                summary_prompt = f"Сожми текст на {summary_percentage}%."
                 summary = call_gigachat_api(summary_prompt, text_content)
                 st.session_state.summary_history.append((summary_percentage, summary))
 
