@@ -37,10 +37,11 @@ def extract_text(file, file_extension):
 
 # Функция для вызова GigaChat API
 def call_gigachat_api(prompt, text_content):
-    messages = [SystemMessage(content=prompt+' Выдавайте ответы всегда на русском и будьте лаконичны в ответе.'), HumanMessage(content=text_content)]
+    messages = [SystemMessage(content=prompt), HumanMessage(content=text_content)]
     res = chat(messages)
     return res.content
 
+# Иницализация эмбеддера
 embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-multilingual-mpnet-base-v2")
 
 # Работа самого приложения
@@ -55,7 +56,7 @@ if uploaded_file is not None:
         st.write('Похоже, произошла какая-то ошибка, попробуйте загрузить файл ещё раз')
 
     # RAG
-    # Разделение текста на части
+    # Создании функции по разделению текста на части
     class CustomTextSplitter(SentenceTransformersTokenTextSplitter):
 
         def split_text(self, text: str) -> list:
@@ -63,17 +64,23 @@ if uploaded_file is not None:
             chunks_with_prefix = ['search_document: ' + chunk for chunk in chunks]
             return chunks_with_prefix
 
+    # Преоброзование текста в удобный для модели формат
     docs = [Document(page_content=text_content)]
 
+    # Разделение текста на части
     text_splitter = CustomTextSplitter(chunk_size=506, chunk_overlap=50, model_name="ai-forever/ru-en-RoSBERTa")
     split_docs = text_splitter.split_documents(docs)
 
+    # Создание векторной базы данных FAISS
     vector_store = FAISS.from_documents(split_docs, embedding=embeddings)
 
+    # Инициализация ретривера
     retriever = vector_store.as_retriever(
         search_type="similarity",
         search_kwargs={"k": 3},
     )
+
+    # Создание шаблонов
     contextualize_q_system_prompt = (
         "Учитывай историю чата и последний вопрос пользователя, "
         "который может ссылаться на контекст в истории чата, "
@@ -94,6 +101,7 @@ if uploaded_file is not None:
         chat, retriever, contextualize_q_prompt
     )
 
+    # Создание вопросно-ответной системы
     qa_system_prompt = (
         "Вы являетесь помощником при выполнении заданий, связанных с ответами на вопросы."
         "Используйте следующие фрагменты найденного контекста, чтобы ответить на вопрос."
@@ -113,8 +121,10 @@ if uploaded_file is not None:
 
     question_answer_chain = create_stuff_documents_chain(chat, qa_prompt)
 
+    # Создание RAG для ответов на вопросы
     rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chain)
 
+    # Создание системы по нахождению определний терминов
     termins_system_prompt = (
         "Вы являетесь помощником при выполнении заданий, связанных с выдачей определений терминов."
         "Используйте следующие фрагменты найденного контекста, чтобы ответить на вопрос."
@@ -134,9 +144,10 @@ if uploaded_file is not None:
 
     termins_answer_chain = create_stuff_documents_chain(chat, termins_prompt)
 
+    # Создание RAG для написания определений терминов
     rag_chain_termins = create_retrieval_chain(history_aware_retriever, termins_answer_chain)
 
-
+    # Инициализация функционала ассистента
     if text_content:
         # Кнопки функционала
         functions = [
@@ -198,7 +209,7 @@ if uploaded_file is not None:
 
             summary_percentage = st.slider("Выберите процент суммирования:", 10, 90, 50, key="summary_slider")
             if st.button("Суммировать", key="summarize_button"):
-                summary_prompt = f"Сожми текст на {summary_percentage}%."
+                summary_prompt = f"Вы являетесь помощником для адаптивной суммаризации текста. Выдавайте ответы всегда на русском, независимо от языка самой статьи. Оставь от исходного статьи {summary_percentage}% текста, содержащего самую главную информацию."
                 summary = call_gigachat_api(summary_prompt, text_content)
                 st.session_state.summary_history.append((summary_percentage, summary))
 
