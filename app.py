@@ -85,11 +85,12 @@ if name:
             file_name = uploaded_file.name
             file_extension = file_name.split('.')[-1] if '.' in file_name else None
             text_content = ''
-
+    
+            # Обработка ошибки извлечения файла
             try:
                 text_content = extract_text(uploaded_file, file_extension)
             except Exception as e:
-                st.write('Похоже, произошла какая-то ошибка, попробуйте загрузить файл ещё раз')
+                st.write('Ошибка извлечения текста: попробуйте загрузить файл в другом формате')
 
             # RAG
             # Создании функции по разделению текста на части
@@ -193,62 +194,66 @@ if name:
                     "Адаптивная суммаризация"
                 ]
                 selected_function = st.selectbox("Выберите функцию", functions)
-
-                if selected_function == functions[0]:  # Литературный обзор
-                    if st.button("Сформировать литературный обзор", key="review_button"):
-                        prompt = "Вы являетесь помощником для резюмирования текста. Выдавайте ответы всегда на русском, независимо от языка самой статьи. Используйте не более 200 слов и будьте лаконичны в ответе."
-                        review = call_gigachat_api(prompt, text_content)
-                        st.write(review)
-
-                elif selected_function == functions[1]:  # Вопрос по содержанию текста
-                    if 'question_history' not in st.session_state:
-                        st.session_state.question_history = []
-
-                    chat_history = []
-                    question = st.text_input("Введите ваш вопрос:", key="question_input")
-
-                    if st.button("Задать вопрос", key="ask_question_button"):
-                        result = rag_chain.invoke({"input": question, "chat_history": chat_history})
-                        answer = result['answer']
-
-                        chat_history.append(HumanMessage(content=question))
-                        chat_history.append(AIMessage(content=answer))
-
-                        st.session_state.question_history.append((question, answer))
-
-                    for q, a in st.session_state.question_history:
-                        st.write(f"**Вопрос:** {q}")
-                        st.write(f"**Ответ:** {a}")
-
-                elif selected_function == functions[2]:  # Объяснение терминов
-                    if 'term_history' not in st.session_state:
-                        st.session_state.term_history = []
-
-                    chat_history_termins = []
-                    term = st.text_input("Введите термин:", key="term_input")
-                    if st.button("Объяснить термин", key="explain_term_button"):
-                        res = rag_chain_termins.invoke({"input": term, "chat_history": chat_history_termins})
-                        definition = res['answer']
-
-                        chat_history_termins.append(HumanMessage(content=term))
-                        chat_history_termins.append(AIMessage(content=definition))
-
-                        st.session_state.term_history.append((term, definition))
-
-                    for t, d in st.session_state.term_history:
-                        st.write(f"**Термин:** {t}")
-                        st.write(f"**Определение:** {d}")
-
-                elif selected_function == functions[3]:  # Адаптивная суммаризация
-                    if 'summary_history' not in st.session_state:
-                        st.session_state.summary_history = []
-
-                    summary_percentage = st.slider("Выберите процент суммирования:", 10, 90, 50, key="summary_slider")
-                    if st.button("Суммировать", key="summarize_button"):
-                        summary_prompt = f"Вы являетесь помощником для адаптивной суммаризации текста. Выдавайте ответы всегда на русском, независимо от языка самой статьи. Оставь от исходного статьи {summary_percentage}% текста, содержащего самую главную информацию."
-                        summary = call_gigachat_api(summary_prompt, text_content)
-                        st.session_state.summary_history.append((summary_percentage, summary))
-
-                    for percent, sum_text in st.session_state.summary_history:
-                        st.write(f"**Процент:** {percent}%")
-                        st.write(f"**Суммированный текст:** {sum_text}")
+                
+                # Обработка ошибки ввода неправильного ключа авторизации
+                try:
+                    if selected_function == functions[0]:  # Литературный обзор
+                        if st.button("Сформировать литературный обзор", key="review_button"):
+                            prompt = "Вы являетесь помощником для резюмирования текста. Выдавайте ответы всегда на русском, независимо от языка самой статьи. Используйте не более 200 слов и будьте лаконичны в ответе."
+                            review = call_gigachat_api(prompt, text_content)
+                            st.write(review)
+    
+                    elif selected_function == functions[1]:  # Вопрос по содержанию текста
+                        if 'question_history' not in st.session_state:
+                            st.session_state.question_history = []
+    
+                        chat_history = []
+                        question = st.text_input("Введите ваш вопрос:", key="question_input")
+    
+                        if st.button("Задать вопрос", key="ask_question_button"):
+                            result = rag_chain.invoke({"input": question, "chat_history": chat_history})
+                            answer = result['answer']
+    
+                            chat_history.append(HumanMessage(content=question))
+                            chat_history.append(AIMessage(content=answer))
+    
+                            st.session_state.question_history.append((question, answer))
+    
+                        for q, a in st.session_state.question_history:
+                            st.write(f"**Вопрос:** {q}")
+                            st.write(f"**Ответ:** {a}")
+    
+                    elif selected_function == functions[2]:  # Объяснение терминов
+                        if 'term_history' not in st.session_state:
+                            st.session_state.term_history = []
+    
+                        chat_history_termins = []
+                        term = st.text_input("Введите термин:", key="term_input")
+                        if st.button("Объяснить термин", key="explain_term_button"):
+                            res = rag_chain_termins.invoke({"input": term, "chat_history": chat_history_termins})
+                            definition = res['answer']
+    
+                            chat_history_termins.append(HumanMessage(content=term))
+                            chat_history_termins.append(AIMessage(content=definition))
+    
+                            st.session_state.term_history.append((term, definition))
+    
+                        for t, d in st.session_state.term_history:
+                            st.write(f"**Термин:** {t}")
+                            st.write(f"**Определение:** {d}")
+    
+                    elif selected_function == functions[3]:  # Адаптивная суммаризация
+                        if 'summary_history' not in st.session_state:
+                            st.session_state.summary_history = []
+    
+                        summary_percentage = st.slider("Выберите процент суммирования:", 10, 90, 50, key="summary_slider")
+                        if st.button("Суммировать", key="summarize_button"):
+                            summary_prompt = f"Вы являетесь помощником для адаптивной суммаризации текста. Выдавайте ответы всегда на русском, независимо от языка самой статьи. Оставь от исходного статьи {summary_percentage}% текста, содержащего самую главную информацию."
+                            summary = call_gigachat_api(summary_prompt, text_content)
+                            st.session_state.summary_history.append((summary_percentage, summary))
+    
+                        for percent, sum_text in st.session_state.summary_history:
+                            st.write(f"**Процент:** {percent}%")
+                            st.write(f"**Суммированный текст:** {sum_text}")
+                except as e:
+                    st.write('Ошибка ввода ключа авторизации: такого ключа авторизации не существует, или он недействителен')
